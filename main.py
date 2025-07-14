@@ -7,19 +7,18 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
-from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-user_work_modes = {}  # {user_id: {date: "Офис" или "Дистанционно"}}
-user_names = {}  # {user_id: full_name}
+user_work_modes = {}
+user_names = {}
 awaiting_name_input = set()
 
 main_kb = ReplyKeyboardMarkup(keyboard=[
@@ -72,7 +71,6 @@ async def toggle_format(callback: CallbackQuery):
         return await callback.answer("Выходной. Формат не изменяется.", show_alert=True)
     current = user_work_modes.setdefault(user_id, {}).get(date, "Офис")
     user_work_modes[user_id][date] = "Дистанционно" if current == "Офис" else "Офис"
-
     kb = build_schedule_keyboard(user_id)
     await callback.message.edit_text("🔎 Формат на 10 дней:", reply_markup=kb)
     await callback.answer("Обновлено")
@@ -117,7 +115,6 @@ async def show_user_format(callback: CallbackQuery):
     uid = int(callback.data.replace("showfmt_", ""))
     name = user_names.get(uid, str(uid))
     days = user_work_modes.setdefault(uid, {})
-
     text = f"<b>Формат работы: {name}</b>\n"
     for i in range(10):
         d = datetime.today().date() + timedelta(days=i)
@@ -131,7 +128,6 @@ async def show_user_format(callback: CallbackQuery):
         symbol = "🏝️" if is_weekend else ("🏢" if format_type == "Офис" else "🏠")
         label = "Выходной" if is_weekend else format_type
         text += f"{symbol} {d.strftime('%d.%m')} ({weekday}): {label}\n"
-
     await callback.message.edit_text(text)
     await callback.answer()
 
