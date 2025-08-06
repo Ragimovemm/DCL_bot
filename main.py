@@ -45,11 +45,9 @@ user_work_modes: Dict[int, Dict[str, str]] = {}
 user_names: Dict[int, str] = {}
 awaiting_name_input: Set[int] = set()
 
-# ИЗМЕНЕНИЕ: комментарии теперь для каждого пользователя и даты
 user_comments: Dict[int, Dict[str, str]] = {}  # {user_id: {date_str: comment}}
 awaiting_comment_input: Dict[int, str] = {}  # {user_id: date_str}
 
-# Новый словарь статусов и эмодзи
 status_icons = {
     "Выходной": "🛌",
     "Отпуск": "🏝️",
@@ -67,7 +65,6 @@ class IsNotRestrictedFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
         return message.from_user.id not in RESTRICTED_USERS
 
-# Фильтры
 dp.message.filter(IsNotRestrictedFilter())
 router.message.filter(IsNotRestrictedFilter())
 
@@ -83,17 +80,19 @@ def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         ])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-# ИЗМЕНЕНИЕ: кнопки комментариев теперь для каждой даты
+def initialize_user_work_modes_if_missing(user_id: int):
+    if user_id not in user_work_modes:
+        user_work_modes[user_id] = {}
+
 def build_schedule_keyboard(user_id: int) -> InlineKeyboardMarkup:
     today = datetime.now().date()
     buttons = []
+    initialize_user_work_modes_if_missing(user_id)
+
     for i in range(10):
         day = today + timedelta(days=i)
         date_str = day.isoformat()
         is_weekend = day.weekday() >= 5
-
-        if user_id not in user_work_modes:
-            user_work_modes[user_id] = {}
 
         status = user_work_modes[user_id].get(date_str)
         if status is None:
@@ -110,7 +109,6 @@ def build_schedule_keyboard(user_id: int) -> InlineKeyboardMarkup:
         else:
             callback_data = f"toggle_{date_str}"
 
-        # Кнопка для комментария на конкретный день
         comment_for_day = user_comments.get(user_id, {}).get(date_str)
         if comment_for_day:
             comment_btn = InlineKeyboardButton(
@@ -188,7 +186,9 @@ async def toggle_date(callback: CallbackQuery):
         date_str = callback.data[7:]
         datetime.fromisoformat(date_str)
 
-        current = user_work_modes.get(user_id, {}).get(date_str, "Офис")
+        initialize_user_work_modes_if_missing(user_id)
+
+        current = user_work_modes[user_id].get(date_str, "Офис")
         new_status = {
             "Офис": "Дистанционно",
             "Дистанционно": "Командировка",
@@ -197,7 +197,7 @@ async def toggle_date(callback: CallbackQuery):
             "Отпуск": "Офис"
         }.get(current, "Офис")
 
-        user_work_modes.setdefault(user_id, {})[date_str] = new_status
+        user_work_modes[user_id][date_str] = new_status
 
         await callback.message.edit_reply_markup(reply_markup=build_schedule_keyboard(user_id))
         await callback.answer(f"Установлен режим: {new_status}")
@@ -213,16 +213,17 @@ async def toggle_weekend_date(callback: CallbackQuery):
         date_str = callback.data[len("toggle_weekend_"):]
         datetime.fromisoformat(date_str)
 
-        current = user_work_modes.get(user_id, {}).get(date_str, "Выходной")
+        initialize_user_work_modes_if_missing(user_id)
 
-        # Цикл переключения: Выходной -> Командировка -> Отпуск -> Выходной
+        current = user_work_modes[user_id].get(date_str, "Выходной")
+
         new_status = {
             "Выходной": "Командировка",
             "Командировка": "Отпуск",
             "Отпуск": "Выходной"
         }.get(current, "Выходной")
 
-        user_work_modes.setdefault(user_id, {})[date_str] = new_status
+        user_work_modes[user_id][date_str] = new_status
 
         await callback.message.edit_reply_markup(reply_markup=build_schedule_keyboard(user_id))
         await callback.answer(f"Установлен режим: {new_status}")
@@ -348,8 +349,6 @@ async def show_user_schedule(callback: CallbackQuery):
         logger.error(f"Ошибка в show_user_schedule: {e}")
         await callback.answer("Ошибка загрузки расписания", show_alert=True)
 
-# --- Обработчики комментариев ---
-
 @dp.callback_query(F.data.startswith("add_comment_"))
 async def add_comment_handler(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -381,8 +380,6 @@ async def delete_comment_handler(callback: CallbackQuery):
     else:
         await callback.answer("Комментарий отсутствует", show_alert=True)
 
-# --- Управление доступом ---
-
 @dp.message(F.text == "⚙️ Управление доступом")
 async def access_management(message: Message):
     if message.from_user.id not in ADMINS:
@@ -404,8 +401,6 @@ async def access_management(message: Message):
     except Exception as e:
         logger.error(f"Ошибка в access_management: {e}")
         await message.answer("Произошла ошибка при загрузке меню управления")
-
-# --- Ограничение доступа и админские команды (без изменений) ---
 
 @dp.callback_query(F.data == "restrict_access")
 async def restrict_access_handler(callback: CallbackQuery):
@@ -586,7 +581,6 @@ async def remove_admin(callback: CallbackQuery):
         logger.error(f"Ошибка в remove_admin: {e}")
         await callback.answer("Ошибка операции", show_alert=True)
 
-# Веб-сервер
 async def handle(request):
     return web.Response(text="✅ Бот работает!")
 
@@ -600,17 +594,19 @@ async def run_web():
     await site.start()
     logger.info("Веб-сервер запущен на порту 8080")
 
-# Ежедневная очистка комментариев в полночь
 async def clear_comments_daily():
     while True:
         now = datetime.now()
         next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
         seconds_until_midnight = (next_midnight - now).total_seconds()
         await asyncio.sleep(seconds_until_midnight)
-        user_comments.clear()  # очищаем все комментарии всех пользователей
+        user_comments.clear()
         logger.info("Комментарии очищены после окончания дня.")
 
 async def main():
+    # Отключаем webhook чтобы избежать конфликтов с polling
+    await bot.delete_webhook(drop_pending_updates=True)
+
     await asyncio.gather(
         dp.start_polling(bot),
         run_web(),
